@@ -14,7 +14,8 @@ import com.strixa.util.Point3D;
 public class Vertex extends Point3D<Double>{
     private final float[] __color = new float[]{.8f,.8f,.8f,1};
     
-    private double __weight;
+    private Point3D<Double> __normal;
+    private double          __weight;
     
     
     /*Begin Constructors*/
@@ -57,6 +58,15 @@ public class Vertex extends Point3D<Double>{
         copy[3] = this.__color[3];
         
         return copy;
+    }
+    
+    /**
+     * Gets the point's surface normal.
+     * 
+     * @return The point's surface normal.
+     */
+    public Point3D<Double> getNormal(){
+        return this.__normal;
     }
     
     /**
@@ -126,6 +136,15 @@ public class Vertex extends Point3D<Double>{
         this.setY(y);
         this.setZ(z);
         this.setWeight(weight);
+    }
+    
+    /**
+     * Sets the element's surface normal.
+     * 
+     * @param normal Normal vector
+     */
+    public void setNormal(Point3D<Double> normal){
+        this.__normal = normal;
     }
     
     /**

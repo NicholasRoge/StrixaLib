@@ -75,7 +75,9 @@ public abstract class Strixa3DCanvas extends StrixaGLCanvas implements MouseMoti
         gl.glBlendFunc(GL2.GL_SRC_ALPHA,GL2.GL_ONE_MINUS_SRC_ALPHA);
         
         gl.glEnable(GL2.GL_LIGHT0);
-        //gl.glEnable(GL2.GL_LIGHTING);  
+        //gl.glEnable(GL2.GL_LIGHTING);
+        
+        gl.glCullFace(GL2.GL_BACK);
     }
     
     @Override public void reshape(GLAutoDrawable drawable,int x,int y,int width,int height){

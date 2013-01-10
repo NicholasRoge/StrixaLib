@@ -339,11 +339,11 @@ public class Strixa3DElement extends StrixaGLElement{
                     texture_points.get(point_index).getWeight() //W
                 );
             }
-            if(!normal_points.isEmpty()){
+            if(component.getPoints().get(point_index).getNormal() != null){
                 gl.glNormal3d(
-                    normal_points.get(point_index).getX(),
-                    normal_points.get(point_index).getY(),
-                    normal_points.get(point_index).getZ()
+                    component.getPoints().get(point_index).getNormal().getX(),
+                    component.getPoints().get(point_index).getNormal().getY(),
+                    component.getPoints().get(point_index).getNormal().getZ()
                 );
             }
             if(!gl.glIsEnabled(GL2.GL_LIGHTING)){
