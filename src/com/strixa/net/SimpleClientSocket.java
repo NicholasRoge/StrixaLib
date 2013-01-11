@@ -78,6 +78,16 @@ public class SimpleClientSocket implements Runnable{
 		this.__port = port;
 		this.__verbose = false;
 	}
+	
+	/**
+	 * Constructs the client socket.
+	 * 
+	 * @param socket Should be an already initialized and connected socket.
+	 */
+	public SimpleClientSocket(Socket socket){
+	    this.__verbose = false;
+	    this._connect(socket);
+	}
 	/*End Constructors*/
 	
 	/*Begin Getter/Setter Methods*/
@@ -139,13 +149,16 @@ public class SimpleClientSocket implements Runnable{
 	 * @return Returns true if the connection was successful, and false, otherwise.
 	 */
 	public boolean connect(){
+	    Socket socket = null;
+	    
+	    
 		if(this.__verbose){
 			Log.logEvent(Log.Type.NOTICE,"Attempting to connect to host='" + this.__host + "' and port='" + this.__port + "'.");
 		}
 		
 		/*Create the connection*/
 		try{
-			this.__socket = new Socket(this.__host,this.__port);
+			socket = new Socket(this.__host,this.__port);
 		}catch(IOException e){
 			if(this.__verbose){
 				Log.logEvent(Log.Type.ERROR,"Could not connect to the requested host and port with the specified information.");
@@ -160,41 +173,53 @@ public class SimpleClientSocket implements Runnable{
 			return false;
 		}
 		
-		/*Retrieve the input stream.*/
-		try{
-			this.__input_stream = new ObjectInputStream(this.__socket.getInputStream());
-		}catch(IOException e){
-			if(this.__verbose){
-				Log.logEvent(Log.Type.WARNING,"The input stream for the socket could not be retrieved.  The user will not be able to recieve incoming data.");
-			}
-			
-			this.__input_stream = null;
-		}
-		
-		/*Retrieve the output stream.*/
-		try{
-			this.__output_stream = new ObjectOutputStream(this.__socket.getOutputStream());
-		}catch(IOException e){
-			if(this.__verbose){
-				Log.logEvent(Log.Type.WARNING,"The output stream for the socket could not be retrieved.  The user will not be able to send data.");
-			}
-			
-			this.__output_stream = null;
-		}
-		
-		/*Start the listener thread.*/
-		if(this.__input_stream != null){
-			this.__listener_thread = new Thread(this,"SimpleClientSocket Data Listener");
-			this.__listener_thread.start();
-		}
-		
-		return true;
+		return this._connect(socket);
+	}
+	
+	protected boolean _connect(Socket socket){
+	    /*Retrieve the input stream.*/
+        try{
+            this.__input_stream = new ObjectInputStream(socket.getInputStream());
+        }catch(IOException e){
+            if(this.__verbose){
+                Log.logEvent(Log.Type.WARNING,"The input stream for the socket could not be retrieved.  The user will not be able to recieve incoming data.");
+            }
+            
+            this.__input_stream = null;
+        }
+        
+        /*Retrieve the output stream.*/
+        try{
+            this.__output_stream = new ObjectOutputStream(socket.getOutputStream());
+        }catch(IOException e){
+            if(this.__verbose){
+                Log.logEvent(Log.Type.WARNING,"The output stream for the socket could not be retrieved.  The user will not be able to send data.");
+            }
+            
+            this.__output_stream = null;
+        }
+        
+        /*Start the listener thread.*/
+        if(this.__input_stream != null){
+            this.__listener_thread = new Thread(this,"SimpleClientSocket Data Listener");
+            this.__listener_thread.start();
+        }
+        
+        if(this.__verbose){
+            Log.logEvent(Log.Type.NOTICE,"The client has successfully connected to the server.");
+        }
+        
+        return true;
 	}
 	
 	/**
 	 * Disconnects from the server.
 	 */
 	public void disconnect(){
+	    if(this.__verbose){
+	        Log.logEvent(Log.Type.NOTICE,"Disconnecting from server.");
+	    }
+	    
 		try{			
 			this.__socket.close();
 			this.__socket.shutdownInput();
