@@ -52,7 +52,43 @@ public class SimpleServerSocket implements Runnable{
 	/*End Getter/Setter Methods*/
 	
 	/*Begin Other Methods*/
+	/**
+     * Adds a listener to be notified of client connection.
+     * 
+     * @param listener Listener to be notified.
+     */
+	public void addClientConnectListener(ClientConnectListener listener){
+	    if(listener == null){
+            throw new NullPointerException("Argument 'listener' must not be null.");
+        }
+        
+        if(this.__client_connect_listeners.contains(listener)){
+            if(this.__verbose){
+                Log.logEvent(Log.Type.NOTICE,"You have already added the requsted listener to this object's list of ClientConnectListeners.  It will not be added again.");
+            }
+        }else{
+            this.__client_connect_listeners.add(listener);
+        }
+	}
 	
+	/**
+     * Removes the requested listener, stopping it from receiving future updates of client connection.
+     * 
+     * @param listener Listener to be removed.
+     */
+    public void removeClientConnectListener(ClientConnectListener listener){
+        if(listener == null){
+            throw new NullPointerException("Argument 'listener' must not be null.");
+        }
+        
+        if(!this.__client_connect_listeners.contains(listener)){
+            if(this.__verbose){
+                Log.logEvent(Log.Type.NOTICE,"The requested listener was not in this object's list of ClientConnectListeners.");
+            }
+        }else{
+            this.__client_connect_listeners.remove(listener);
+        }
+    }
 	
 	public void run(){
         SimpleClientSocket client = null;
@@ -74,9 +110,11 @@ public class SimpleServerSocket implements Runnable{
                 continue;
             }
             
-            client = new SimpleClientSocket(socket);client.send(new byte[]{0xD,0xE,0xA,0xD,0xB,0xE,0xE,0xF});
+            client = new SimpleClientSocket(socket);
+            client.setVerbose(this.__verbose);
+            
             this.__clients.add(client);
-            for(int index = 0,end_index = this.__client_connect_listeners.size();index <= end_index;index++){
+            for(int index = 0,end_index = this.__client_connect_listeners.size() - 1;index <= end_index;index++){
                 if(!this.__client_connect_listeners.get(index).onClientConnect(client)){
                     client.disconnect();
                     this.__clients.remove(client);
