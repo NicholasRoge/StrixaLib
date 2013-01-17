@@ -5,7 +5,6 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.ArrayList;
 
-import com.strixa.net.SimpleClientSocket.DataReceivedListener;
 import com.strixa.util.Log;
 
 public class SimpleServerSocket implements Runnable{

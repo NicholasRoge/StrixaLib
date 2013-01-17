@@ -2,7 +2,7 @@
  * File:  FileTypeFilter.java
  * Date of Creation:  Dec 4, 2012
  */
-package com.strixa.swing.filechooser;
+package com.strixa.gui.swing.filechooser;
 
 import java.io.File;
 

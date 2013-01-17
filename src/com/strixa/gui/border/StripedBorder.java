@@ -1,4 +1,4 @@
-package com.strixa.border;
+package com.strixa.gui.border;
 
 import java.awt.Color;
 import java.awt.Component;

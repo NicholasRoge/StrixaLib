@@ -2,7 +2,7 @@
  * File:  RMenu.java
  * Date of Creation:  Jul 2, 2012
  */
-package com.strixa.menu;
+package com.strixa.gui.menu;
 
 import javax.swing.JMenuBar;
 

@@ -12,8 +12,8 @@ import java.util.Map;
 import javax.swing.JFrame;
 import javax.swing.UIManager;
 
+import com.strixa.gui.menu.StrixaMenu;
 import com.strixa.gui.panel.StrixaPanel;
-import com.strixa.menu.StrixaMenu;
 
 
 /**

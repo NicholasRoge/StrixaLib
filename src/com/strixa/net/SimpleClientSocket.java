@@ -2,6 +2,7 @@ package com.strixa.net;
 
 import java.io.EOFException;
 import java.io.IOException;
+import java.io.NotSerializableException;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.net.InetAddress;
@@ -10,6 +11,7 @@ import java.net.SocketException;
 import java.net.SocketTimeoutException;
 import java.net.UnknownHostException;
 import java.util.ArrayList;
+import java.util.Vector;
 
 import com.strixa.util.Log;
 
@@ -17,20 +19,32 @@ import com.strixa.util.Log;
  * Simplifies the use of sockets by automating some of the concepts of socket creation such as listing for and sending data. 
  */
 public class SimpleClientSocket{
-    /*Begin Data Control Keys*/
-    /**Indicates that the data contained in the message is a piece of data.  This will always have additional data.*/
-    protected static final byte _DATA = 0x0;
-    /*End Data Control Keys*/
+	/**
+	 * Contains keys that should be used in sending and receiving messages.
+	 */
+	protected static final class MessageKeys{
+	    /**Indicates that the data contained in the message is a piece of data.  This will always have additional data.*/
+	    public static final byte DATA = 0x0;
+	    /**Indicates that the connection is being closed.  This will never have additional data.*/
+	    public static final byte DISCONNECT_NOTICE = 0x1;
+	}
     
-    /*Begin State Flags*/
-    /**Indicates a state in which the object is waiting for */
-    public static final int AWAITING_SERVER_CONNECT_FLAG = 0x1;
-    /*End State Flags*/
+	/**
+	 * Contains any flag which will be used to manipulate this object.
+	 */
+    protected static final class ControlFlags{
+	    /**Indicates a state in which the SimpleClientSocket is waiting to connect to the server.*/
+	    public static final int AWAITING_SERVER_CONNECT_FLAG = 0x1;
+	    /**If this flag is set, it requires that the SimpleClientSocket send a notice that they're disconnecting. */ 
+	    public static final int DISCONNECT_NOTICE_FLAG = 0x2;
+	    /**Indicates that the connection closed badly (was not requested by the client or server) and should attempt to be revived if requested.*/
+	    public static final byte BAD_DISONNECT = 0x4;
+    }
     
 	/**
 	 * Notifies the listener of data received by a {@link com.strixa.net.SimpleClientSocket} object.
 	 */
-	public interface DataReceivedListener{
+	public interface ClientEventListener{
 		/**
 		 * Called when data is received by the {@link com.strixa.net.SimpleClientSocket}. 
 		 * 
@@ -38,14 +52,23 @@ public class SimpleClientSocket{
 		 * @param data Data which was received.
 		 */
 		public void onDataReceived(SimpleClientSocket socket,Object data);
+		
+		/**
+		 * Called when the client disconnects from the server.
+		 * 
+		 * @param socket Socket which is disconnecting.
+		 * 
+		 * @return Implemented classes should return true if they would like the socket to attempt a reconnect on a bad disconnect (not requested by the client or server), and false, otherwise.
+		 */
+		public boolean onDisconnect(SimpleClientSocket socket);
 	}
 	
 	/**
-	 * Distributes the data to this objects {@link com.strixa.net.SimpleClientSocket.DataReceivedListener}s.
+	 * Distributes the data to this objects {@link com.strixa.net.SimpleClientSocket.ClientEventListener}s.
 	 */
 	private class DataReceivedDistributor implements Runnable{
 		private Object __data;
-		private DataReceivedListener __listener;
+		private ClientEventListener __listener;
 		
 		
 		/*Begin Constructors*/
@@ -55,7 +78,7 @@ public class SimpleClientSocket{
 		 * @param listener Listener to be notified of data received.
 		 * @param data Data which was received.
 		 */
-		public DataReceivedDistributor(DataReceivedListener listener,Object data){
+		public DataReceivedDistributor(ClientEventListener listener,Object data){
 			this.__data = data;
 			this.__listener = listener;
 		}
@@ -68,25 +91,10 @@ public class SimpleClientSocket{
 		/*End Other Methods*/
 	}
 	
+	/**
+	 * Listens to the input stream for messages to be read.
+	 */
 	private class MessageReceiver implements Runnable{
-	    /**
-	     * Created because of the need for a non-blocking stream check.
-	     */
-	    private class MessageScanner implements Runnable{
-	        private boolean __run;
-	        
-	        
-	        /*Begin Other Methods*/
-	        public void run(){
-	            this.__run = true;
-	            while(this.__run){
-	                
-	            }
-	        }
-	    }
-	    
-	    private final  ArrayList<Object> __message_buffer = new ArrayList<Object>();
-	    
 	    private boolean __run;
 	    
 	    
@@ -113,6 +121,7 @@ public class SimpleClientSocket{
 	                    Log.logEvent(Log.Type.NOTICE,"Disconnecting from the server because of a SocketException.  Reason:  " + e.getMessage());
 	                }
 	                
+	                SimpleClientSocket.this._setFlag(ControlFlags.BAD_DISONNECT,true);
 	                SimpleClientSocket.this.disconnect();
 	                
 	                continue;
@@ -121,12 +130,13 @@ public class SimpleClientSocket{
 	                    Log.logEvent(Log.Type.NOTICE,"Disconnecting from the server because of the end of the stream was reached.");
 	                }
 	                
+	                SimpleClientSocket.this._setFlag(ControlFlags.BAD_DISONNECT,true);
 	                SimpleClientSocket.this.disconnect();
 	                
 	                continue;
 	            }catch(IOException e){              
 	                if(SimpleClientSocket.this.__verbose){
-	                    Log.logEvent(Log.Type.WARNING,"An IOException occured while attempting to read the data from the stream.");
+	                    Log.logEvent(Log.Type.WARNING,"An IOException occured while attempting to read the data from the stream.  Message:  " + e.getMessage());
 	                }
 	                    
 	                continue;
@@ -149,15 +159,21 @@ public class SimpleClientSocket{
 	        }
 	    }
 	    
+	    /**
+	     * Causes the MessageReceiver to stop listening for new messages.
+	     */
 	    public void stop(){
 	        this.__run = false;
 	    }
 	}
 	
+	/**
+	 * Processes the data that was pushed to this object, allowing for fully asynchronous sending of data.
+	 */
 	private class SendQueueProcessor implements Runnable{
-	    private final ArrayList<Message>  __data_queue = new ArrayList<Message>();
+	    private final Vector<Message>  __data_queue = new Vector<Message>();
 	    
-	    private boolean             __run;
+	    private boolean __run;
 	    	    
 	    
 	    /*Begin Getter/Setter Methods*/
@@ -180,8 +196,18 @@ public class SimpleClientSocket{
 	     * @param to_front If this is an important message, this should be true to indicate that the data should be processed before anything else.
 	     */
 	    public void push(byte data_code,Object data,boolean to_front){
-	        final Message message = new Message(data_code,data);
+	        Message message = null;
 	        
+	        
+	        try{
+	        	message = new Message(data_code,data);
+	        }catch(NotSerializableException e){
+	        	if(SimpleClientSocket.this.__verbose){
+	        		Log.logEvent(Log.Type.WARNING,"Message not send.  Any data which you would like to send must be serializable.");
+	        	}
+	        	
+	        	return;
+	        }
 	        
 	        if(to_front){
 	            this.__data_queue.add(0,message);
@@ -215,22 +241,24 @@ public class SimpleClientSocket{
             }
         }
 	    
+	    /**
+	     * Stops the SimpleClientSocket from sending any more messages.
+	     */
 	    public void stop(){
 	        this.__run = false;
 	    }
 	    /*End Other Methods*/
 	}
 	
-	private final ArrayList<DataReceivedListener> __data_received_listeners = new ArrayList<DataReceivedListener>();
-	private final MessageReceiver                 __message_receiver = new MessageReceiver();
-	private final Thread                          __message_receiver_thread = new Thread(this.__message_receiver,"SimpleClientSocket MessageReceiver Thread");
-	private final SendQueueProcessor              __send_queue_processor = new SendQueueProcessor();
-	private final Thread                          __send_queue_processor_thread = new Thread(this.__send_queue_processor,"SimpleClientSocket SendQueueProcessor Thread");
+	private final ArrayList<ClientEventListener> __client_event_listeners = new ArrayList<ClientEventListener>();
+	private final MessageReceiver                __message_receiver = new MessageReceiver();
+	private final Thread                         __message_receiver_thread = new Thread(this.__message_receiver,"SimpleClientSocket MessageReceiver Thread");
+	private final SendQueueProcessor             __send_queue_processor = new SendQueueProcessor();
+	private final Thread                         __send_queue_processor_thread = new Thread(this.__send_queue_processor,"SimpleClientSocket SendQueueProcessor Thread");
 	
 	private InetAddress        __address;
-	private int                __control;
+	private int                __control_flags;
 	private ObjectInputStream  __input_stream;
-	private Thread             __listener_thread;
 	private ObjectOutputStream __output_stream;
 	private int                __port;
 	private Socket             __socket;
@@ -243,15 +271,23 @@ public class SimpleClientSocket{
 	 * 
 	 * @param host Host you would like to connect to.  This may in the form of a URL or an IP address.
 	 * @param port Port to which you would like to connect.
+	 * 
+	 * @throws UnkownHostException Thrown if the requested host cannot be found.
 	 */
 	public SimpleClientSocket(String host,int port) throws UnknownHostException{
 	    this(InetAddress.getByName(host),port);
 	}
 	
+	/**
+	 * Constructs the client socket.
+	 * 
+	 * @param address Initialized {@link java.net.InetAddress} object containing the information for the SimpleServerSocket you would like to connect to.
+	 * @param port Port to which you would like to connect.
+	 */
 	public SimpleClientSocket(InetAddress address,int port){
 	    this.__address = address;
 	    
-	    this.__control = SimpleClientSocket.AWAITING_SERVER_CONNECT_FLAG;
+	    this.__control_flags = ControlFlags.DISCONNECT_NOTICE_FLAG | ControlFlags.AWAITING_SERVER_CONNECT_FLAG;
         this.__port = port;
         this.__verbose = false;
 	}
@@ -267,22 +303,25 @@ public class SimpleClientSocket{
 	}
 	/*End Constructors*/
 	
-	/*Begin Getter/Setter Methods*/
+	/*Begin Getter/Setter Methods*/	
 	/**
-	 * Retrieves the thread on which the socket is listening for incoming data.
-	 * 	
-	 * @return Returns the listener thread.  Will be null if the 'connect' method has not yet been called.
+	 * Gets the raw socket object through which this object is connected.
+	 * 
+	 * @return The raw socket object through which this object is connected.
 	 */
-	public Thread getListenerThread(){
-		return this.__listener_thread;
-	}
-	
 	public Socket getRawSocket(){
 	    return this.__socket;
 	}
 	
-	protected boolean _hasKey(int key){
-	    return (this.__control & key) == key;
+	/**
+	 * Gets the value for the requested flag.
+	 * 
+	 * @param flag Flag whose value is in question.  This should be one of the constants defined in {@link com.strixa.net.SimpleClientSocket.ControlFlags}.
+	 * 
+	 * @return Returns true, if this flag is set, and false, otherwise.
+	 */
+	protected boolean _getFlag(int flag){
+	    return (this.__control_flags & flag) == flag;
 	}
 	
 	/**
@@ -291,7 +330,7 @@ public class SimpleClientSocket{
 	 * @return Returns true if the connection has been made, and false, otherwise.
 	 */
 	public boolean isConnected(){
-		if(this._hasKey(AWAITING_SERVER_CONNECT_FLAG)){
+		if(this._getFlag(ControlFlags.AWAITING_SERVER_CONNECT_FLAG)){
 			return false;
 		}
 		
@@ -306,26 +345,56 @@ public class SimpleClientSocket{
 	public void setVerbose(boolean verbose){
 		this.__verbose = verbose;
 	}
+	
+	/**
+	 * Sets the value for the requested flag.
+	 * 
+	 * @param flag Flag to check.  This should be one of the constants defined in {@link com.strixa.net.SimpleClientSocket.ControlFlags}.
+	 * @param set Should be set to true, if the flag should be set, and false, otherwise.
+	 */
+	protected void _setFlag(int flag,boolean set){
+		if(this._getFlag(flag) != set){
+			this.__control_flags = this.__control_flags ^ flag;
+		}
+	}
 	/*End Getter/Setter Methods*/
 	
 	/*Begin Other Methods*/
 	/**
-	 * Adds a listener to be notified of data received.
+	 * Adds a listener to be notified of any client events.
 	 * 
 	 * @param listener Listener to be notified.
 	 */
-	public void addDataReceivedListener(DataReceivedListener listener){
+	public void addClientEventListener(ClientEventListener listener){
 		if(listener == null){
 			throw new NullPointerException("Argument 'listener' must not be null.");
 		}
 		
-		if(this.__data_received_listeners.contains(listener)){
+		if(this.__client_event_listeners.contains(listener)){
 			if(this.__verbose){
 				Log.logEvent(Log.Type.NOTICE,"You have already added the requsted listener to this object's list of DataReceivedListeners.  It will not be added again.");
 			}
 		}else{
-			this.__data_received_listeners.add(listener);
+			this.__client_event_listeners.add(listener);
 		}
+	}
+	
+	/**
+	 * Broadcasts a disconnect to all listeners.
+	 * 
+	 * @return Returns true if the client should attempt a reconnect on bad (not requested by client or server) disconnect.
+	 */
+	private boolean __broadcastDisconnect(){
+		boolean reconnect = false;
+		
+		
+		for(int index = 0,end_index = this.__client_event_listeners.size() - 1;index <= end_index;index++){
+			if(this.__client_event_listeners.get(index).onDisconnect(this)){
+				reconnect = true;
+			}
+		}
+		
+		return reconnect;
 	}
 	
 	/**
@@ -417,11 +486,18 @@ public class SimpleClientSocket{
 	 * Disconnects from the server.
 	 */
 	public void disconnect(){
+		byte attempt = 1;
+		
+		
 	    if(this.__verbose){
 	        Log.logEvent(Log.Type.NOTICE,"Disconnecting from server.");
 	    }
 	    
-		try{						
+		try{
+			if(this._getFlag(ControlFlags.DISCONNECT_NOTICE_FLAG)){
+				this._pushDataToQueue(MessageKeys.DISCONNECT_NOTICE, null,false);
+			}
+			
 			this.__message_receiver.stop();
 			
 			while(this.__send_queue_processor.hasQueuedData()){
@@ -446,30 +522,51 @@ public class SimpleClientSocket{
 		}catch(IOException e){
 			Log.logEvent(Log.Type.WARNING,"An IOException occured while attempting to disconnect the socket.");
 		}
+		
+		if(this.__broadcastDisconnect() && this._getFlag(ControlFlags.BAD_DISONNECT)){
+			while(!this.connect()){
+				if(attempt > 3){
+					Log.logEvent(Log.Type.NOTICE,"Maximum reconnect attempts reached.  Failed to reconnect to server.");
+				}else{
+					attempt++;
+				}
+				
+				try{
+					Thread.sleep(500);
+				}catch(InterruptedException e){
+					//TODO:  Nothing!
+				}
+			}
+		}
 	}
 	
 	protected void _interpret(Message message){
 	    switch(message.getMessageCode()){
-	        case _DATA:
-	            for(int index = 0,end_index = this.__data_received_listeners.size() - 1;index <= end_index;index++){
-	                new Thread(new DataReceivedDistributor(this.__data_received_listeners.get(index),message.getMessage())).start();
+	        case MessageKeys.DATA:
+	            for(int index = 0,end_index = this.__client_event_listeners.size() - 1;index <= end_index;index++){
+	                new Thread(new DataReceivedDistributor(this.__client_event_listeners.get(index),message.getMessage())).start();
 	            }
 	            
 	            break;
+	        case MessageKeys.DISCONNECT_NOTICE:
+	        	this._setFlag(ControlFlags.DISCONNECT_NOTICE_FLAG,false);
+	        	this.disconnect();
+	        	
+	        	break;
 	    }
 	}
 	
 	/**
-	 * Pushes data to the SendQueueProcessor to be sent.  Data sent using this method automatically assumes it is of data_code type {@link com.strixa.net.SimpleClientSocket#_DATA} with teh lowest priority.
+	 * Pushes data to the SendQueueProcessor to be sent.  Data sent using this method automatically assumes it is of data_code type {@link com.strixa.net.SimpleClientSocket#DATA} with teh lowest priority.
 	 * 
 	 * @param data Data to be sent.
 	 */
 	protected void _pushDataToQueue(Object data){
-	    this._pushDataToQueue(_DATA,data,true);
+	    this._pushDataToQueue(MessageKeys.DATA,data,true);
 	}
 	
 	/**
-     * Pushes data to the SendQueueProcessor to be sent.  Data sent using this method automatically assumes it is of data_code type {@link com.strixa.net.SimpleClientSocket#_DATA} with teh lowest priority.
+     * Pushes data to the SendQueueProcessor to be sent.  Data sent using this method automatically assumes it is of data_code type {@link com.strixa.net.SimpleClientSocket#DATA} with teh lowest priority.
      * 
      * @param data Data to be sent.
      */
@@ -478,21 +575,21 @@ public class SimpleClientSocket{
     }
 	
 	/**
-	 * Removes the requested listener, stopping it from receiving future updates of data retrieval.
+	 * Removes the requested listener, stopping it from receiving future client events.
 	 * 
 	 * @param listener Listener to be removed.
 	 */
-	public void removeDataReceivedListener(DataReceivedListener listener){
+	public void removeClientEventListener(ClientEventListener listener){
 		if(listener == null){
 			throw new NullPointerException("Argument 'listener' must not be null.");
 		}
 		
-		if(!this.__data_received_listeners.contains(listener)){
+		if(!this.__client_event_listeners.contains(listener)){
 			if(this.__verbose){
 				Log.logEvent(Log.Type.NOTICE,"The requested listener was not in this object's list of DataReceievedListeners.");
 			}
 		}else{
-			this.__data_received_listeners.remove(listener);
+			this.__client_event_listeners.remove(listener);
 		}
 	}
 	
