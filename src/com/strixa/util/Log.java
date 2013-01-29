@@ -84,6 +84,10 @@ public class Log{
         SwingUtilities.invokeLater(new MessageRunner(new Message(type,timestamp,message)));
     }
     
+    public static void e(String message){
+    	Log.logEvent(Log.Type.ERROR,message);
+    }
+    
     /**
      * Logs an event to the requested output stream.
      * 
@@ -127,5 +131,13 @@ public class Log{
                 Log.__logEvent(message,attempt + 1);
             }
         }
+    }
+    
+    public static void n(String message){
+    	Log.logEvent(Log.Type.NOTICE,message);
+    }
+    
+    public static void w(String message){
+    	Log.logEvent(Log.Type.WARNING,message);
     }
 }
