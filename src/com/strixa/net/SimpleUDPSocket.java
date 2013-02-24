@@ -5,6 +5,7 @@
 package com.strixa.net;
 
 import java.io.IOException;
+import java.net.BindException;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetAddress;
@@ -18,8 +19,6 @@ import com.strixa.util.Log;
 
 /**
  * TODO:  Write Class Description
- *
- * @author Nicho_000
  */
 public class SimpleUDPSocket{
     private class DataDeliverer implements Runnable{
@@ -87,12 +86,16 @@ public class SimpleUDPSocket{
     
     private DatagramSocket __communication_socket;
     private PacketReceiver __packet_receiver;
-    private Thread         __udp_connector;
+    private int            __preferred_port;
     
     
     /*Begin Constructors*/
     public SimpleUDPSocket(){
-        
+        this.__preferred_port = -1;
+    }
+    
+    public SimpleUDPSocket(int port){
+        this.__preferred_port = port;
     }
     /*End Constructors*/
     
@@ -107,8 +110,29 @@ public class SimpleUDPSocket{
     /*End Getter/Setter Methods*/
     
     /*Begin Other Methods*/
+    public void addPacketReceivedListener(PacketReceivedListener listener){
+        this.addPacketReceivedListener(SimpleUDPSocket.DEFAULT_TYPE_ID,listener);
+    }
+    
+    public void addPacketReceivedListener(int type_id,PacketReceivedListener listener){
+        ArrayList<PacketReceivedListener> listeners;
+        
+        
+        listeners = this.__packet_received_listeners_by_type_id.get(type_id);
+        if(listeners == null){
+            listeners = new ArrayList<PacketReceivedListener>();
+            this.__packet_received_listeners_by_type_id.put(type_id,listeners);
+        }
+        
+        listeners.add(listener);
+    }
+    
     protected byte[] _getDataFromPacketData(byte[] data){
-        return Arrays.copyOfRange(data,SimpleUDPSocket.HEADER_LENGTH + 1,data[SimpleUDPSocket.HEADER_LENGTH]);
+        final int data_start = SimpleUDPSocket.HEADER_LENGTH + 1;
+        final int data_length = data[SimpleUDPSocket.HEADER_LENGTH];
+        
+        
+        return Arrays.copyOfRange(data,data_start,data_start + data_length);
     }
     
     protected int _getHeaderFromPacketData(byte[] data){
@@ -128,21 +152,42 @@ public class SimpleUDPSocket{
         ArrayList<PacketReceivedListener> listeners;
         
         
-        listeners = this.__packet_received_listeners_by_type_id.get(this._getHeaderFromPacketData(data));
+        listeners = this.__packet_received_listeners_by_type_id.get(header);
         if(listeners != null){
             for(int index = 0,end = listeners.size();index < end;index++){
-                new Thread(new DataDeliverer(listeners.get(index),header,data));
+                new Thread(new DataDeliverer(listeners.get(index),header,data)).start();
             }
-        }
+        }   
+    }
+    
+    public void removePacketReceivedListener(PacketReceivedListener listener){
+        this.removePacketReceivedListener(SimpleUDPSocket.DEFAULT_TYPE_ID,listener);
+    }
+    
+    public void removePacketReceivedListener(int type_id,PacketReceivedListener listener){
+        ArrayList<PacketReceivedListener> listeners;
         
+        
+        listeners = this.__packet_received_listeners_by_type_id.get(type_id);
+        if(listeners != null){
+            listeners.remove(listener);
+        }
     }
     
     public boolean send(byte[] data,InetAddress recipient_address,int recipient_port){
-        return this.send(data,0,recipient_address,recipient_port);
+        return this.send(SimpleUDPSocket.DEFAULT_TYPE_ID,data,0,data.length,recipient_address,recipient_port);
+    }
+    
+    public boolean send(int type_id,byte[] data,InetAddress recipient_address,int recipient_port){
+        return this.send(type_id,data,0,data.length,recipient_address,recipient_port);
     }
     
     public boolean send(byte[] data,int begin,InetAddress recipient_address,int recipient_port){
-        return this.send(data,begin,data.length,recipient_address,recipient_port);
+        return this.send(SimpleUDPSocket.DEFAULT_TYPE_ID,data,begin,data.length,recipient_address,recipient_port);
+    }
+    
+    public boolean send(int type_id,byte[] data,int begin,InetAddress recipient_address,int recipient_port){
+        return this.send(type_id,data,begin,data.length,recipient_address,recipient_port);
     }
     
     /**
@@ -154,7 +199,7 @@ public class SimpleUDPSocket{
      * 
      * @return Returns true if the data was sent, and false, otherwise.
      */
-    public boolean send(int header,byte[] data,int begin,int end,InetAddress recipient_address,int recipient_port){
+    public boolean send(int type_id,byte[] data,int begin,int end,InetAddress recipient_address,int recipient_port){
         final int    data_length = end - begin;
         final byte[] packet_data = new byte[SimpleUDPSocket.HEADER_LENGTH + 1 + (end - begin)];
         
@@ -172,7 +217,7 @@ public class SimpleUDPSocket{
         }
         
         ByteBuffer.wrap(packet_data).
-            putInt(header).
+            putInt(type_id).
             put(new Integer(data.length).byteValue()).
             put(Arrays.copyOfRange(data,begin,end));
         
@@ -190,7 +235,11 @@ public class SimpleUDPSocket{
     
     public boolean start(){
         try{
-            this.__communication_socket = new DatagramSocket();
+            if(this.__preferred_port == -1){
+                this.__communication_socket = new DatagramSocket();
+            }else{
+                this.__communication_socket = new DatagramSocket(this.__preferred_port);
+            }
         }catch(SocketException e){
             Log.e("Could not start the SimpleUDPSocket because of a socket exception.  Message:  " + e.getMessage());
             
@@ -202,8 +251,16 @@ public class SimpleUDPSocket{
         }
         
         this.__packet_receiver = new PacketReceiver();
+        new Thread(this.__packet_receiver,"Packet Receiver").start();
         
         return true;
+    }
+    
+    public void stop(){
+        this.__packet_receiver.stop();
+        
+        this.__communication_socket.close();
+        this.__communication_socket = null;
     }
     /*End Other Methods*/
 }
