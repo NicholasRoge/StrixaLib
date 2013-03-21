@@ -38,7 +38,7 @@ public class SimpleClientSocket{
 	    /**If this flag is set, it requires that the SimpleClientSocket send a notice that they're disconnecting. */ 
 	    public static final int DISCONNECT_NOTICE_FLAG = 0x2;
 	    /**Indicates that the connection closed badly (was not requested by the client or server) and should attempt to be revived if requested.*/
-	    public static final byte BAD_DISONNECT = 0x4;
+	    public static final int BAD_DISONNECT = 0x4;
     }
     
 	/**
@@ -109,7 +109,7 @@ public class SimpleClientSocket{
                 try{
                     data = SimpleClientSocket.this.__input_stream.readObject();
 	            }catch(SocketTimeoutException e){
-	                if(SimpleClientSocket.this.__socket.isClosed()){
+	                if(!SimpleClientSocket.this.isConnected()){
                         Log.logEvent(Log.Type.NOTICE,"The socket was closed.");
                         
                         this.stop();
@@ -117,7 +117,7 @@ public class SimpleClientSocket{
 	                
 	                continue;
 	            }catch(SocketException e){
-	                if(SimpleClientSocket.this.__verbose){
+                    if(SimpleClientSocket.this.__verbose){
 	                    Log.logEvent(Log.Type.NOTICE,"Disconnecting from the server because of a SocketException.  Reason:  " + e.getMessage());
 	                }
 	                
@@ -131,10 +131,10 @@ public class SimpleClientSocket{
 	                }
 	                
 	                SimpleClientSocket.this._setFlag(ControlFlags.BAD_DISONNECT,true);
-	                SimpleClientSocket.this.disconnect();
+                    SimpleClientSocket.this.disconnect();
 	                
 	                continue;
-	            }catch(IOException e){              
+	            }catch(IOException e){
 	                if(SimpleClientSocket.this.__verbose){
 	                    Log.logEvent(Log.Type.WARNING,"An IOException occured while attempting to read the data from the stream.  Message:  " + e.getMessage());
 	                }
@@ -203,7 +203,7 @@ public class SimpleClientSocket{
 	        	message = new Message(data_code,data);
 	        }catch(NotSerializableException e){
 	        	if(SimpleClientSocket.this.__verbose){
-	        		Log.logEvent(Log.Type.WARNING,"Message not send.  Any data which you would like to send must be serializable.");
+	        		Log.logEvent(Log.Type.WARNING,"Message not sent.  Any data which you would like to send must be serializable.");
 	        	}
 	        	
 	        	return;
@@ -478,6 +478,7 @@ public class SimpleClientSocket{
                 
         
         this.__socket = socket;
+        this._setFlag(SimpleClientSocket.ControlFlags.AWAITING_SERVER_CONNECT_FLAG,false);
         
         return true;
 	}
@@ -499,6 +500,15 @@ public class SimpleClientSocket{
 			}
 			
 			this.__message_receiver.stop();
+			if(!Thread.currentThread().equals(this.__message_receiver_thread)){
+			    while(this.__message_receiver_thread.isAlive()){
+	                try{
+	                    Thread.sleep(50);
+	                }catch(InterruptedException e){
+	                    //TODO:  Nothing!
+	                }
+	            }
+			}
 			
 			while(this.__send_queue_processor.hasQueuedData()){
 		        try{
@@ -518,7 +528,6 @@ public class SimpleClientSocket{
             if(!this.__socket.isClosed()){
                 this.__socket.close();
             }
-            this.__socket = null;
 		}catch(IOException e){
 			Log.logEvent(Log.Type.WARNING,"An IOException occured while attempting to disconnect the socket.");
 		}

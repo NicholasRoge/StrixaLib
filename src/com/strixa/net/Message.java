@@ -27,7 +27,7 @@ public class Message implements Serializable{
      * @throws NotSerializableException Thrown if argument 'message' has not implemented the Serializable interface.
      */
     public Message(byte message_code,Object message) throws NotSerializableException{
-    	if(!(message instanceof Serializable)){
+    	if(message != null && !(message instanceof Serializable)){
     		throw new NotSerializableException();
     	}
     	

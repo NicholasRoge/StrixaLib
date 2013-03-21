@@ -10,6 +10,7 @@ import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetAddress;
 import java.net.SocketException;
+import java.net.SocketTimeoutException;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -22,28 +23,32 @@ import com.strixa.util.Log;
  */
 public class SimpleUDPSocket{
     private class DataDeliverer implements Runnable{
-        private byte[]                 __data;
-        private int                    __header;
-        private PacketReceivedListener __listener;
+        private byte[]                  __data;
+        private int                     __header;
+        private UDPDataReceivedListener __listener;
+        private InetAddress             __source_address;
+        private int                     __source_port;
         
         
         /*Begin Constructors*/
-        public DataDeliverer(PacketReceivedListener listener,int header,byte[] data){           
+        public DataDeliverer(UDPDataReceivedListener listener,int header,byte[] data,InetAddress source_address,int source_port){           
             this.__data = data;
             this.__header = header;
             this.__listener =  listener;
+            this.__source_address = source_address;
+            this.__source_port = source_port;
         }
         /*End Constructors*/
         
         /*Begin Constructors*/
         public void run(){
-            this.__listener.onDataReceived(this.__header,this.__data);
+            this.__listener.onUDPDataReceived(this.__header,this.__data,this.__source_address,this.__source_port);
         }
         /*Begin Constructors*/
     }
     
-    public interface PacketReceivedListener{
-        public void onDataReceived(int header,byte[] data);
+    public interface UDPDataReceivedListener{
+        public void onUDPDataReceived(int header,byte[] data,InetAddress source_address,int source_port);
     }
     
     private class PacketReceiver implements Runnable{
@@ -60,8 +65,12 @@ public class SimpleUDPSocket{
                 
                 try{
                     SimpleUDPSocket.this.__communication_socket.receive(packet);
+                }catch(SocketTimeoutException e){
+                    continue;
                 }catch(IOException e){
-                    Log.w("An error occured while attempting to receive data from the communication socket.");
+                    if(SimpleUDPSocket.this.__communication_socket.isConnected()){  //If the connection is closed, don't display any error, as its likely this happened because the user closed teh connection.
+                        Log.w("An error occured while attempting to receive data from the communication socket.");
+                    }
                     
                     continue;
                 }
@@ -80,14 +89,15 @@ public class SimpleUDPSocket{
     /**Length of the header (in bytes)*/
     public static final int HEADER_LENGTH = SimpleUDPSocket.__INT_SIZE * 2; 
     /**Maximum size (in bytes) the data sent through this object can be.*/
-    public static final int MAX_PACKET_SIZE = 255;
+    public static final int MAX_PACKET_SIZE = 1024;
     
     private static final int __INT_SIZE = Integer.SIZE / 8;
     
-    private HashMap<Integer,ArrayList<PacketReceivedListener>> __packet_received_listeners_by_type_id = new HashMap<Integer,ArrayList<PacketReceivedListener>>();
+    private HashMap<Integer,ArrayList<UDPDataReceivedListener>> __packet_received_listeners_by_type_id = new HashMap<Integer,ArrayList<UDPDataReceivedListener>>();
     
     private DatagramSocket __communication_socket;
     private PacketReceiver __packet_receiver;
+    private Thread         __packet_receiver_thread;
     private int            __preferred_port;
     
     
@@ -112,17 +122,17 @@ public class SimpleUDPSocket{
     /*End Getter/Setter Methods*/
     
     /*Begin Other Methods*/
-    public void addPacketReceivedListener(PacketReceivedListener listener){
+    public void addPacketReceivedListener(UDPDataReceivedListener listener){
         this.addPacketReceivedListener(SimpleUDPSocket.DEFAULT_TYPE_ID,listener);
     }
     
-    public void addPacketReceivedListener(int type_id,PacketReceivedListener listener){
-        ArrayList<PacketReceivedListener> listeners;
+    public void addPacketReceivedListener(int type_id,UDPDataReceivedListener listener){
+        ArrayList<UDPDataReceivedListener> listeners;
         
         
         listeners = this.__packet_received_listeners_by_type_id.get(type_id);
         if(listeners == null){
-            listeners = new ArrayList<PacketReceivedListener>();
+            listeners = new ArrayList<UDPDataReceivedListener>();
             this.__packet_received_listeners_by_type_id.put(type_id,listeners);
         }
         
@@ -146,26 +156,28 @@ public class SimpleUDPSocket{
     }
     
     protected void _onDatagramReceived(DatagramPacket packet){        
-        final byte[] data = this._getDataFromPacketData(packet.getData());
-        final int    type_id = this._getTypeIdFromPacketData(packet.getData());
+        final byte[]      data = this._getDataFromPacketData(packet.getData());
+        final InetAddress source_address = packet.getAddress();
+        final int         source_port = packet.getPort();
+        final int         type_id = this._getTypeIdFromPacketData(packet.getData());
         
-        ArrayList<PacketReceivedListener> listeners;
+        ArrayList<UDPDataReceivedListener> listeners;
         
         
         listeners = this.__packet_received_listeners_by_type_id.get(type_id);
         if(listeners != null){
             for(int index = 0,end = listeners.size();index < end;index++){
-                new Thread(new DataDeliverer(listeners.get(index),type_id,data)).start();
+                new Thread(new DataDeliverer(listeners.get(index),type_id,data,source_address,source_port)).start();
             }
         }   
     }
     
-    public void removePacketReceivedListener(PacketReceivedListener listener){
+    public void removePacketReceivedListener(UDPDataReceivedListener listener){
         this.removePacketReceivedListener(SimpleUDPSocket.DEFAULT_TYPE_ID,listener);
     }
     
-    public void removePacketReceivedListener(int type_id,PacketReceivedListener listener){
-        ArrayList<PacketReceivedListener> listeners;
+    public void removePacketReceivedListener(int type_id,UDPDataReceivedListener listener){
+        ArrayList<UDPDataReceivedListener> listeners;
         
         
         listeners = this.__packet_received_listeners_by_type_id.get(type_id);
@@ -247,6 +259,8 @@ public class SimpleUDPSocket{
             }else{
                 this.__communication_socket = new DatagramSocket(this.__preferred_port);
             }
+            
+            this.__communication_socket.setSoTimeout(1000);
         }catch(SocketException e){
             Log.e("Could not start the SimpleUDPSocket because of a socket exception.  Message:  " + e.getMessage());
             
@@ -258,7 +272,8 @@ public class SimpleUDPSocket{
         }
         
         this.__packet_receiver = new PacketReceiver();
-        new Thread(this.__packet_receiver,"Packet Receiver").start();
+        this.__packet_receiver_thread = new Thread(this.__packet_receiver,"Packet Receiver");
+        this.__packet_receiver_thread.start();
         
         return true;
     }
@@ -267,7 +282,6 @@ public class SimpleUDPSocket{
         this.__packet_receiver.stop();
         
         this.__communication_socket.close();
-        this.__communication_socket = null;
     }
     /*End Other Methods*/
 }
